@@ -13,22 +13,13 @@ This is a one-time setup, about 10 minutes.
 1. In the project, open **SQL Editor** → **New query**.
 2. Paste in everything from [`supabase/schema.sql`](supabase/schema.sql) and click **Run**. You should see "Success. No rows returned".
 
-## 3. Put the sign-in code in the email
+## 3. Turn off email confirmation
 
-The app signs you in with a code from your email instead of a link. A code works when the app is
-saved to your home screen, but a link would open in Safari instead.
+The app signs in with email and password, and it doesn't need to send any email. That avoids
+setting up an email service (SMTP).
 
-1. Go to **Authentication** → **Emails** → **Templates** → **Magic Link**.
-2. Replace the message body with:
-
-   ```html
-   <h2>Your Knitting Helper sign-in code</h2>
-   <p>Enter this code in the app: <strong>{{ .Token }}</strong></p>
-   <p>Or <a href="{{ .ConfirmationURL }}">sign in with this link</a>.</p>
-   ```
-
-3. Save. Then do the same for the **Confirm signup** template, which is the email sent the very
-   first time you sign in.
+1. Go to **Authentication** → **Sign In / Providers** → **Email**.
+2. Turn **off** "Confirm email" and save.
 
 ## 4. Point Supabase at the site
 
@@ -48,5 +39,8 @@ Both are meant to sit in the page's code. Never share the **secret** / **service
 
 - **Free tier:** 500 MB of data and 1 GB of photos, which is plenty for personal use. A free project pauses
   after about a week with no use at all. Your data is kept, and you can restore it from the dashboard.
-- **Email limits:** Supabase's built-in email sender only sends a few emails per hour. That's fine for
-  signing in, because you stay signed in for a long time.
+- **Accounts:** anyone who finds the site can create an account, but each account only ever sees its own
+  projects and photos. To stop new sign-ups after you've made yours, turn off **Allow new users to sign up**
+  under Authentication → Sign In / Providers.
+- **Forgotten passwords** aren't handled in the app yet. You can reset a password from the Supabase dashboard
+  under Authentication → Users.

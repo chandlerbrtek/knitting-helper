@@ -87,7 +87,7 @@
     }
 
     .project-bar { display: flex; gap: 8px; }
-    select, input[type="text"], input[type="email"] {
+    select, input[type="text"], input[type="email"], input[type="password"] {
       flex: 1;
       min-width: 0;
       font: inherit;
@@ -332,15 +332,14 @@
       <div class="color-panel hidden" id="account-panel">
         <div id="signed-out">
           <p>Sign in to back up your projects and photos, and to use them on other devices.</p>
-          <form id="email-form" class="pattern-form">
-            <input type="email" id="email-input" placeholder="you@example.com" autocomplete="email" required aria-label="Email">
-            <button class="save" type="submit">Send code</button>
+          <form id="auth-form" class="add-form" style="border-top: none; padding-top: 0; margin-top: 0">
+            <input type="email" id="email-input" placeholder="Email" autocomplete="username" autocapitalize="off" required aria-label="Email">
+            <input type="password" id="password-input" placeholder="Password (at least 6 characters)" autocomplete="current-password" minlength="6" required aria-label="Password">
+            <div class="form-buttons">
+              <button class="cancel" type="button" id="create-account">Create account</button>
+              <button class="save" type="submit">Sign in</button>
+            </div>
           </form>
-          <form id="code-form" class="pattern-form hidden">
-            <input type="text" id="code-input" inputmode="numeric" autocomplete="one-time-code" placeholder="Code from email" maxlength="12" aria-label="Sign-in code">
-            <button class="save" type="submit">Sign in</button>
-          </form>
-          <button class="link-btn hidden" id="change-email" type="button">Use a different email</button>
           <p class="hint" id="auth-msg"></p>
         </div>
         <div id="signed-in" class="hidden">
@@ -882,7 +881,6 @@
     let syncing = false;
     let syncQueued = false;
     let syncTimer = null;
-    let pendingEmail = "";
 
     function initSync() {
       if (!SUPABASE_URL || !SUPABASE_KEY) return;
@@ -1123,56 +1121,46 @@
       document.getElementById("auth-msg").textContent = text;
     }
 
-    function showCodeStep(show) {
-      document.getElementById("email-form").classList.toggle("hidden", show);
-      document.getElementById("code-form").classList.toggle("hidden", !show);
-      document.getElementById("change-email").classList.toggle("hidden", !show);
-      if (show) document.getElementById("code-input").focus();
-    }
-
     document.getElementById("account-btn").addEventListener("click", e => {
       const panel = document.getElementById("account-panel");
       const open = panel.classList.toggle("hidden") === false;
       e.currentTarget.setAttribute("aria-expanded", open);
     });
 
-    document.getElementById("email-form").addEventListener("submit", async e => {
-      e.preventDefault();
+    async function authenticate(createAccount) {
+      const form = document.getElementById("auth-form");
+      if (!form.reportValidity()) return;
       if (!sb) { setAuthMessage("Still connecting. Try again in a moment."); return; }
       const email = document.getElementById("email-input").value.trim();
-      const button = e.target.querySelector("button");
-      button.disabled = true;
-      setAuthMessage("Sending…");
-      const { error } = await sb.auth.signInWithOtp({
-        email,
-        options: { shouldCreateUser: true, emailRedirectTo: location.origin + location.pathname }
-      });
-      button.disabled = false;
-      if (error) { setAuthMessage(`Couldn't send the code: ${error.message}`); return; }
-      pendingEmail = email;
-      document.getElementById("code-input").value = "";
-      showCodeStep(true);
-      setAuthMessage(`We emailed a code to ${email}. It can take a minute to arrive.`);
-    });
+      const password = document.getElementById("password-input").value;
+      const buttons = form.querySelectorAll("button");
+      buttons.forEach(b => b.disabled = true);
+      setAuthMessage(createAccount ? "Creating your account…" : "Signing in…");
+      const { data, error } = createAccount
+        ? await sb.auth.signUp({ email, password })
+        : await sb.auth.signInWithPassword({ email, password });
+      buttons.forEach(b => b.disabled = false);
+      if (error) {
+        const msg = /invalid login/i.test(error.message)
+          ? "That email and password don't match. New here? Tap Create account."
+          : error.message;
+        setAuthMessage(msg);
+        return;
+      }
+      if (createAccount && !data.session) {
+        // Happens if "Confirm email" is still on in Supabase.
+        setAuthMessage("Account created, but it needs email confirmation first. Check your inbox.");
+        return;
+      }
+      document.getElementById("password-input").value = "";
+      setAuthMessage("");
+    }
 
-    document.getElementById("code-form").addEventListener("submit", async e => {
+    document.getElementById("auth-form").addEventListener("submit", e => {
       e.preventDefault();
-      const token = document.getElementById("code-input").value.replace(/\s/g, "");
-      if (!token) return;
-      const button = e.target.querySelector("button");
-      button.disabled = true;
-      setAuthMessage("Checking…");
-      const { error } = await sb.auth.verifyOtp({ email: pendingEmail, token, type: "email" });
-      button.disabled = false;
-      if (error) { setAuthMessage("That code didn't work. Check it, or send a new one."); return; }
-      setAuthMessage("");
-      showCodeStep(false);
+      authenticate(false);
     });
-
-    document.getElementById("change-email").addEventListener("click", () => {
-      showCodeStep(false);
-      setAuthMessage("");
-    });
+    document.getElementById("create-account").addEventListener("click", () => authenticate(true));
 
     document.getElementById("sync-now").addEventListener("click", () => sync());
 
