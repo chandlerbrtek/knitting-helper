@@ -6,7 +6,7 @@ A helper for knitters — tools to make planning and working through knitting pr
 
 ## Features
 
-- Row and stitch counters with big, thumb-friendly + / − buttons
+- Row and stitch counters with big, thumb-friendly + / − buttons, each with its own notes box
 - Multiple projects, each with its own saved counts
 - Needles and yarn lists per project, with common sizes, weights and fibers to pick from, plus your own (remembered for next time)
 - A pattern link per project (opens in a new tab)
