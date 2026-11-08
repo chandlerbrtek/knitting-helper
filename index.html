@@ -185,6 +185,68 @@
     .save { background: var(--accent); color: var(--card); border: none; }
     .cancel { background: var(--card); color: var(--text); border: 1px solid var(--border); }
 
+    .pattern-form { display: flex; gap: 8px; margin-top: 8px; }
+    .pattern-form input { flex: 1; min-width: 0; }
+    .pattern-form .save { border-radius: 12px; padding: 0 18px; font: inherit; font-weight: 600; cursor: pointer; }
+    #pattern-link {
+      display: block;
+      margin: 8px 0 12px;
+      color: var(--accent);
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }
+    .danger-text { color: var(--danger) !important; }
+
+    .photo-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .photo-grid:empty { display: none; }
+    .photo-grid button {
+      padding: 0;
+      border: none;
+      background: var(--accent-soft);
+      border-radius: 10px;
+      overflow: hidden;
+      aspect-ratio: 1;
+      cursor: pointer;
+    }
+    .photo-grid img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    #photos-status { color: var(--muted); font-size: 0.9rem; margin: 8px 0 0; }
+
+    .viewer {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      background: rgba(0, 0, 0, 0.92);
+      display: flex;
+      flex-direction: column;
+      padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+    }
+    .viewer img { flex: 1; min-height: 0; width: 100%; object-fit: contain; }
+    .viewer-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px;
+      color: #ddd;
+    }
+    .viewer-bar span { flex: 1; font-size: 0.9rem; }
+    .viewer-bar button {
+      font: inherit;
+      font-weight: 600;
+      min-height: 44px;
+      padding: 0 16px;
+      border-radius: 12px;
+      border: 1px solid #555;
+      background: #222;
+      color: #fff;
+      cursor: pointer;
+    }
+    .viewer-bar .delete { color: #f08a98; }
+
     .empty { text-align: center; color: var(--muted); padding: 48px 0; }
     .hidden { display: none !important; }
   </style>
@@ -251,8 +313,44 @@
       </section>
     </div>
 
+    <div id="extras">
+      <section class="list-card" id="pattern-card">
+        <div class="counter-head"><h2>Pattern</h2></div>
+        <div id="pattern-view" class="hidden">
+          <a id="pattern-link" target="_blank" rel="noopener noreferrer"></a>
+          <div class="form-buttons">
+            <button class="cancel" id="pattern-edit" type="button">Edit</button>
+            <button class="cancel danger-text" id="pattern-remove" type="button">Remove</button>
+          </div>
+        </div>
+        <form id="pattern-form" class="pattern-form">
+          <input type="text" inputmode="url" autocapitalize="off" spellcheck="false" id="pattern-input" placeholder="Paste a link to the pattern" autocomplete="off" aria-label="Pattern link">
+          <button class="save" type="submit">Save</button>
+        </form>
+      </section>
+
+      <section class="list-card" id="photos-card">
+        <div class="counter-head">
+          <h2>Photos</h2>
+          <label class="add-btn">＋ Add<input type="file" id="photo-input" accept="image/*" multiple hidden></label>
+        </div>
+        <div class="photo-grid" id="photo-grid"></div>
+        <p class="none" id="photos-none">No photos yet. Add some as you go to see your progress.</p>
+        <p class="hidden" id="photos-status"></p>
+      </section>
+    </div>
+
     <p class="empty hidden" id="empty">No projects yet. Tap ＋ to start one.</p>
   </main>
+
+  <div id="viewer" class="viewer hidden" role="dialog" aria-label="Photo">
+    <img id="viewer-img" alt="">
+    <div class="viewer-bar">
+      <span id="viewer-date"></span>
+      <button class="delete" id="viewer-delete" type="button">Delete</button>
+      <button id="viewer-close" type="button">Close</button>
+    </div>
+  </div>
 
   <script>
     const STORAGE_KEY = "knitting-helper:v1";
@@ -313,6 +411,8 @@
       for (const p of data.projects) {
         p.needles = p.needles || [];
         p.yarns = p.yarns || [];
+        p.pattern = p.pattern || "";
+        p.photos = p.photos || [];
       }
       return data;
     }
@@ -326,7 +426,7 @@
     }
 
     function newProject(name) {
-      return { id: newId(), name, rows: 0, stitches: 0, needles: [], yarns: [] };
+      return { id: newId(), name, rows: 0, stitches: 0, needles: [], yarns: [], pattern: "", photos: [] };
     }
 
     const state = load();
@@ -340,6 +440,7 @@
       const has = state.projects.length > 0;
       document.getElementById("counters").classList.toggle("hidden", !has);
       document.getElementById("lists").classList.toggle("hidden", !has);
+      document.getElementById("extras").classList.toggle("hidden", !has);
       document.getElementById("project-actions").classList.toggle("hidden", !has);
       select.classList.toggle("hidden", !has);
       document.getElementById("empty").classList.toggle("hidden", has);
@@ -359,6 +460,193 @@
         section.querySelector(".value").textContent = p[section.dataset.key];
       }
       for (const key of Object.keys(LISTS)) renderList(key);
+      // The pattern and photos only need redrawing when the project changes,
+      // not on every counter tap.
+      if (p.id !== shownProjectId) {
+        shownProjectId = p.id;
+        renderPattern();
+        renderPhotos();
+      }
+    }
+    let shownProjectId = null;
+
+    // ----- Pattern link -----
+
+    function normalizeUrl(text) {
+      text = text.trim();
+      if (!text) return "";
+      if (!/^[a-z][a-z0-9+.-]*:/i.test(text)) text = "https://" + text;
+      try {
+        const url = new URL(text);
+        return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function renderPattern(editing) {
+      const link = current().pattern;
+      const showForm = editing || !link;
+      document.getElementById("pattern-view").classList.toggle("hidden", showForm);
+      document.getElementById("pattern-form").classList.toggle("hidden", !showForm);
+      const input = document.getElementById("pattern-input");
+      input.value = link;
+      if (link) {
+        const a = document.getElementById("pattern-link");
+        a.href = link;
+        a.textContent = link.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "");
+      }
+      if (editing) input.focus();
+    }
+
+    document.getElementById("pattern-form").addEventListener("submit", e => {
+      e.preventDefault();
+      const url = normalizeUrl(document.getElementById("pattern-input").value);
+      if (url === null) {
+        alert("That doesn't look like a web link. Try copying it again from your browser.");
+        return;
+      }
+      current().pattern = url;
+      save();
+      renderPattern();
+    });
+    document.getElementById("pattern-edit").addEventListener("click", () => renderPattern(true));
+    document.getElementById("pattern-remove").addEventListener("click", () => {
+      if (!confirm("Remove the pattern link?")) return;
+      current().pattern = "";
+      save();
+      renderPattern();
+    });
+
+    // ----- Photos -----
+    // Photos are too big for localStorage, so the images live in IndexedDB
+    // (keyed by photo id) and each project just keeps the list of ids.
+
+    let dbPromise = null;
+    function photoStore(mode, fn) {
+      dbPromise = dbPromise || new Promise((resolve, reject) => {
+        const req = indexedDB.open("knitting-helper", 1);
+        req.onupgradeneeded = () => req.result.createObjectStore("photos");
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      return dbPromise.then(db => new Promise((resolve, reject) => {
+        const tx = db.transaction("photos", mode);
+        const req = fn(tx.objectStore("photos"));
+        tx.oncomplete = () => resolve(req.result);
+        tx.onerror = () => reject(tx.error);
+      }));
+    }
+    const putPhoto = (id, blob) => photoStore("readwrite", s => s.put(blob, id));
+    const getPhoto = id => photoStore("readonly", s => s.get(id));
+    const deletePhoto = id => photoStore("readwrite", s => s.delete(id));
+
+    // Shrink to at most 1600px on the long side so photos don't fill up the phone.
+    function shrinkImage(file) {
+      return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+          const scale = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.round(img.naturalWidth * scale);
+          canvas.height = Math.round(img.naturalHeight * scale);
+          canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+          URL.revokeObjectURL(url);
+          canvas.toBlob(b => b ? resolve(b) : reject(new Error("encode failed")), "image/jpeg", 0.85);
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("unreadable image")); };
+        img.src = url;
+      });
+    }
+
+    const photoUrls = new Map();
+    async function photoUrl(id) {
+      if (!photoUrls.has(id)) {
+        const blob = await getPhoto(id);
+        photoUrls.set(id, blob ? URL.createObjectURL(blob) : "");
+      }
+      return photoUrls.get(id);
+    }
+
+    async function renderPhotos() {
+      const p = current();
+      const grid = document.getElementById("photo-grid");
+      document.getElementById("photos-none").classList.toggle("hidden", p.photos.length > 0);
+      const buttons = [];
+      for (const photo of [...p.photos].reverse()) {
+        const btn = el("button", { type: "button" }, [el("img", { alt: "Project photo", loading: "lazy" })]);
+        btn.dataset.id = photo.id;
+        buttons.push(btn);
+      }
+      grid.replaceChildren(...buttons);
+      for (const btn of buttons) {
+        try { btn.firstChild.src = await photoUrl(btn.dataset.id); } catch (e) {}
+      }
+    }
+
+    function setPhotoStatus(text) {
+      const status = document.getElementById("photos-status");
+      status.textContent = text;
+      status.classList.toggle("hidden", !text);
+    }
+
+    document.getElementById("photo-input").addEventListener("change", async e => {
+      const files = [...e.target.files];
+      e.target.value = "";
+      if (!files.length) return;
+      const p = current();
+      let failed = 0;
+      for (let i = 0; i < files.length; i++) {
+        setPhotoStatus(files.length > 1 ? `Adding photo ${i + 1} of ${files.length}…` : "Adding photo…");
+        try {
+          const blob = await shrinkImage(files[i]);
+          const id = newId();
+          await putPhoto(id, blob);
+          p.photos.push({ id, added: new Date().toISOString() });
+          save();
+        } catch (err) {
+          failed++;
+        }
+      }
+      setPhotoStatus(failed ? `${failed} photo${failed > 1 ? "s" : ""} couldn't be added.` : "");
+      // Ask the browser not to clear our storage when space runs low.
+      if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+      if (current() === p) renderPhotos();
+    });
+
+    let viewing = null;
+    document.getElementById("photo-grid").addEventListener("click", async e => {
+      const btn = e.target.closest("button[data-id]");
+      if (!btn) return;
+      viewing = current().photos.find(x => x.id === btn.dataset.id);
+      if (!viewing) return;
+      document.getElementById("viewer-img").src = await photoUrl(viewing.id);
+      document.getElementById("viewer-date").textContent = new Date(viewing.added)
+        .toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+      document.getElementById("viewer").classList.remove("hidden");
+    });
+
+    function closeViewer() {
+      document.getElementById("viewer").classList.add("hidden");
+      viewing = null;
+    }
+    document.getElementById("viewer-close").addEventListener("click", closeViewer);
+    document.getElementById("viewer-img").addEventListener("click", closeViewer);
+    document.getElementById("viewer-delete").addEventListener("click", async () => {
+      if (!viewing || !confirm("Delete this photo? This can't be undone.")) return;
+      const id = viewing.id;
+      current().photos = current().photos.filter(x => x.id !== id);
+      save();
+      closeViewer();
+      await removePhotoData(id);
+      renderPhotos();
+    });
+
+    async function removePhotoData(id) {
+      if (photoUrls.get(id)) URL.revokeObjectURL(photoUrls.get(id));
+      photoUrls.delete(id);
+      try { await deletePhoto(id); } catch (e) {}
     }
 
     function el(tag, props, children) {
@@ -519,6 +807,7 @@
     document.getElementById("delete-project").addEventListener("click", () => {
       const p = current();
       if (!confirm(`Delete "${p.name}"? This can't be undone.`)) return;
+      for (const photo of p.photos) removePhotoData(photo.id);
       state.projects = state.projects.filter(x => x.id !== p.id);
       state.currentId = state.projects[0] ? state.projects[0].id : null;
       save();
