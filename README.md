@@ -2,13 +2,24 @@
 
 A helper for knitters — tools to make planning and working through knitting projects easier.
 
-## Status
+**Live app:** https://chandlerbrtek.github.io/knitting-helper/
 
-Early days. Implementation details are still being worked out.
+## Features
 
-## Getting started
+- Row and stitch counters with big, thumb-friendly + / − buttons
+- Multiple projects, each with its own saved counts
+- Rename, delete, and reset
+- Works on phones; counts are saved in your browser (no account needed)
 
-Coming soon.
+## Running locally
+
+It's a single static page. Open `index.html` in a browser, or serve the folder:
+
+```bash
+python3 -m http.server 8000
+```
+
+Then visit http://localhost:8000.
 
 ## License
 
