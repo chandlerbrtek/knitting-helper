@@ -50,10 +50,44 @@
     }
     main { max-width: 480px; margin: 0 auto; }
     header { padding: 16px 0 8px; }
-    h1 { font-size: 1.25rem; margin: 0 0 12px; }
+    h1 { font-size: 1.25rem; margin: 0; }
+    .title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .account-btn {
+      font: inherit;
+      font-size: 0.85rem;
+      font-weight: 600;
+      background: var(--accent-soft);
+      color: var(--accent);
+      border: none;
+      border-radius: 999px;
+      padding: 8px 14px;
+      min-height: 36px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .account-btn.warn { color: var(--danger); }
+    #account-panel { margin-bottom: 8px; }
+    #account-panel .pattern-form { margin-top: 0; }
+    .hint { font-size: 0.85rem; color: var(--muted); margin: 10px 0 0 !important; }
+    .hint:empty { display: none; }
+    .link-btn {
+      font: inherit;
+      font-size: 0.85rem;
+      background: none;
+      border: none;
+      padding: 8px 0 0;
+      color: var(--accent);
+      cursor: pointer;
+    }
 
     .project-bar { display: flex; gap: 8px; }
-    select, input[type="text"] {
+    select, input[type="text"], input[type="email"], input[type="password"] {
       flex: 1;
       min-width: 0;
       font: inherit;
@@ -224,7 +258,7 @@
 
     .pattern-form { display: flex; gap: 8px; margin-top: 8px; }
     .pattern-form input { flex: 1; min-width: 0; }
-    .pattern-form .save { border-radius: 12px; padding: 0 18px; font: inherit; font-weight: 600; cursor: pointer; }
+    .pattern-form .save { min-height: 48px; white-space: nowrap; border-radius: 12px; padding: 0 18px; font: inherit; font-weight: 600; cursor: pointer; }
     #pattern-link {
       display: block;
       margin: 8px 0 12px;
@@ -291,7 +325,32 @@
 <body>
   <main>
     <header>
-      <h1>🧶 Knitting Helper</h1>
+      <div class="title-row">
+        <h1>🧶 Knitting Helper</h1>
+        <button class="account-btn hidden" id="account-btn" type="button" aria-expanded="false">Sign in</button>
+      </div>
+      <div class="color-panel hidden" id="account-panel">
+        <div id="signed-out">
+          <p>Sign in to back up your projects and photos, and to use them on other devices.</p>
+          <form id="auth-form" class="add-form" style="border-top: none; padding-top: 0; margin-top: 0">
+            <input type="email" id="email-input" placeholder="Email" autocomplete="username" autocapitalize="off" required aria-label="Email">
+            <input type="password" id="password-input" placeholder="Password (at least 6 characters)" autocomplete="current-password" minlength="6" required aria-label="Password">
+            <div class="form-buttons">
+              <button class="cancel" type="button" id="create-account">Create account</button>
+              <button class="save" type="submit">Sign in</button>
+            </div>
+          </form>
+          <p class="hint" id="auth-msg"></p>
+        </div>
+        <div id="signed-in" class="hidden">
+          <p id="account-email"></p>
+          <p class="hint" id="sync-detail"></p>
+          <div class="form-buttons" style="margin-top: 12px">
+            <button class="cancel" id="sync-now" type="button">Sync now</button>
+            <button class="cancel danger-text" id="sign-out" type="button">Sign out</button>
+          </div>
+        </div>
+      </div>
       <div class="project-bar">
         <select id="project-select" aria-label="Current project"></select>
         <button class="icon-btn" id="add-project" aria-label="New project">＋</button>
@@ -397,6 +456,11 @@
   <script>
     const STORAGE_KEY = "knitting-helper:v1";
 
+    // Supabase project for sign-in and backup (see SUPABASE_SETUP.md).
+    // Both values are public by design; leave empty to turn sign-in off.
+    const SUPABASE_URL = "https://szspizesgugbtvriejfj.supabase.co";
+    const SUPABASE_KEY = "sb_publishable_LXCn4vY-pJDmg7nBw5fhWg_UTUr0KAw";
+
     // Common choices shown in the dropdowns. Anything the user adds is
     // remembered in state.custom and offered for every project.
     const DEFAULTS = {
@@ -467,16 +531,52 @@
       // Fill in fields added after the first version, so old saves keep working.
       data.custom = data.custom || {};
       for (const k of Object.keys(DEFAULTS)) data.custom[k] = data.custom[k] || [];
-      for (const p of data.projects) {
-        p.needles = p.needles || [];
-        p.yarns = p.yarns || [];
-        p.pattern = p.pattern || "";
-        p.photos = p.photos || [];
-      }
+      for (const p of data.projects) normalizeProject(p);
+      // Bookkeeping for cloud sync: which projects have unsent changes,
+      // deleted projects not yet sent, photos already uploaded, and photos to delete.
+      data.sync = Object.assign({ dirty: {}, tombstones: {}, uploaded: {}, photoDeletes: [], customDirty: false }, data.sync);
       return data;
     }
 
+    function normalizeProject(p) {
+      p.needles = p.needles || [];
+      p.yarns = p.yarns || [];
+      p.pattern = p.pattern || "";
+      p.photos = p.photos || [];
+      p.updated = p.updated || Date.now();
+      return p;
+    }
+
+    // A project's content without its timestamp, used to spot edits.
+    function snap(p) {
+      const { updated, ...rest } = p;
+      return JSON.stringify(rest);
+    }
+    const snapshots = new Map();
+    let customSnapshot = "";
+
+    // Saves to the device. Any project whose content changed since the last
+    // save gets a new "updated" time and is queued to sync.
     function save() {
+      const now = Date.now();
+      for (const p of state.projects) {
+        const s = snap(p);
+        if (snapshots.get(p.id) !== s) {
+          snapshots.set(p.id, s);
+          p.updated = now;
+          state.sync.dirty[p.id] = true;
+        }
+      }
+      const cs = JSON.stringify(state.custom);
+      if (cs !== customSnapshot) {
+        customSnapshot = cs;
+        state.sync.customDirty = true;
+      }
+      writeState();
+      scheduleSync();
+    }
+
+    function writeState() {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
     }
 
@@ -489,6 +589,8 @@
     }
 
     const state = load();
+    for (const p of state.projects) snapshots.set(p.id, snap(p));
+    customSnapshot = JSON.stringify(state.custom);
     const select = document.getElementById("project-select");
 
     function current() {
@@ -669,8 +771,11 @@
     const photoUrls = new Map();
     async function photoUrl(id) {
       if (!photoUrls.has(id)) {
-        const blob = await getPhoto(id);
-        photoUrls.set(id, blob ? URL.createObjectURL(blob) : "");
+        let blob = await getPhoto(id);
+        // Not on this device yet (added on another one): fetch it from the account.
+        if (!blob) blob = await downloadPhoto(id);
+        if (!blob) return "";
+        photoUrls.set(id, URL.createObjectURL(blob));
       }
       return photoUrls.get(id);
     }
@@ -687,7 +792,10 @@
       }
       grid.replaceChildren(...buttons);
       for (const btn of buttons) {
-        try { btn.firstChild.src = await photoUrl(btn.dataset.id); } catch (e) {}
+        try {
+          const url = await photoUrl(btn.dataset.id);
+          if (url) btn.firstChild.src = url;
+        } catch (e) {}
       }
     }
 
@@ -745,15 +853,334 @@
       current().photos = current().photos.filter(x => x.id !== id);
       save();
       closeViewer();
-      await removePhotoData(id);
+      await removePhotoData(id, true);
       renderPhotos();
     });
 
-    async function removePhotoData(id) {
+    // Removes a photo from this device. With fromAccount, it is also queued
+    // for deletion from the account's backup.
+    async function removePhotoData(id, fromAccount) {
       if (photoUrls.get(id)) URL.revokeObjectURL(photoUrls.get(id));
       photoUrls.delete(id);
+      if (fromAccount && state.sync.uploaded[id]) {
+        state.sync.photoDeletes.push(id);
+        writeState();
+      }
       try { await deletePhoto(id); } catch (e) {}
     }
+
+    // ----- Sign-in and cloud sync -----
+    // The device copy is always the one the app reads and writes. When signed
+    // in, changes are copied to Supabase, and changes from other devices are
+    // pulled in. If the same project changed in two places, the newest edit wins.
+
+    let sb = null;          // Supabase client, once its script has loaded
+    let user = null;
+    let syncStatus = "idle";
+    let syncError = "";
+    let syncing = false;
+    let syncQueued = false;
+    let syncTimer = null;
+
+    function initSync() {
+      if (!SUPABASE_URL || !SUPABASE_KEY) return;
+      document.getElementById("account-btn").classList.remove("hidden");
+      const script = document.createElement("script");
+      script.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js";
+      script.onload = () => {
+        sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        sb.auth.onAuthStateChange((event, session) => {
+          const before = user;
+          user = session ? session.user : null;
+          updateAccountUI();
+          // Supabase advises against calling it from inside this callback.
+          if (user && (!before || before.id !== user.id)) setTimeout(sync, 0);
+        });
+      };
+      script.onerror = () => { syncStatus = "offline"; updateAccountUI(); };
+      document.head.append(script);
+    }
+
+    function scheduleSync(delay) {
+      if (!sb || !user) return;
+      clearTimeout(syncTimer);
+      syncTimer = setTimeout(sync, delay === undefined ? 1500 : delay);
+    }
+
+    async function sync() {
+      if (!sb || !user) return;
+      if (syncing) { syncQueued = true; return; }
+      if (!navigator.onLine) { setStatus("offline"); return; }
+      syncing = true;
+      setStatus("syncing");
+      try {
+        await syncProjects();
+        await syncSettings();
+        await syncPhotos();
+        state.sync.last = Date.now();
+        writeState();
+        syncError = "";
+        setStatus("ok");
+        // Show photos that arrived from another device.
+        if (current() && current().photos.some(ph => !photoUrls.has(ph.id))) renderPhotos();
+      } catch (e) {
+        console.warn("Sync failed", e);
+        syncError = (e && e.message) || String(e);
+        setStatus(navigator.onLine ? "error" : "offline");
+      } finally {
+        syncing = false;
+        if (syncQueued) { syncQueued = false; scheduleSync(300); }
+      }
+    }
+
+    function isPristine(p) {
+      return p.name === "My first project" && !p.rows && !p.stitches && !p.needles.length &&
+        !p.yarns.length && !p.pattern && !p.photos.length && !p.color;
+    }
+
+    async function syncProjects() {
+      const S = state.sync;
+      const { data: rows, error } = await sb.from("projects").select("id, data, updated, deleted");
+      if (error) throw error;
+      const remote = new Map(rows.map(r => [r.id, r]));
+      let changed = false;
+      let currentChanged = false;
+
+      // Signing in on a new device: drop its untouched starter project
+      // instead of adding it to an account that already has projects.
+      if (rows.some(r => !r.deleted)) {
+        for (const p of state.projects.filter(p => !remote.has(p.id) && isPristine(p))) {
+          state.projects = state.projects.filter(x => x !== p);
+          delete S.dirty[p.id];
+          snapshots.delete(p.id);
+          changed = true;
+        }
+      }
+
+      // Take in anything newer from the account.
+      for (const r of rows) {
+        const local = state.projects.find(p => p.id === r.id);
+        const localTime = local ? local.updated : (S.tombstones[r.id] !== undefined ? S.tombstones[r.id] : -1);
+        if (r.updated <= localTime) continue;
+        if (r.deleted) {
+          if (local) {
+            for (const ph of local.photos) removePhotoData(ph.id, false);
+            state.projects = state.projects.filter(p => p !== local);
+            snapshots.delete(r.id);
+            changed = true;
+            if (r.id === state.currentId) currentChanged = true;
+          }
+        } else {
+          const incoming = normalizeProject(Object.assign({}, r.data, { id: r.id, updated: r.updated }));
+          if (local) {
+            const keep = new Set(incoming.photos.map(ph => ph.id));
+            for (const ph of local.photos) if (!keep.has(ph.id)) removePhotoData(ph.id, false);
+            state.projects[state.projects.indexOf(local)] = incoming;
+          } else {
+            state.projects.push(incoming);
+          }
+          snapshots.set(r.id, snap(incoming));
+          changed = true;
+          if (r.id === state.currentId) currentChanged = true;
+        }
+        delete S.dirty[r.id];
+        delete S.tombstones[r.id];
+      }
+
+      // Send anything newer on this device.
+      const upserts = [];
+      for (const p of state.projects) {
+        const r = remote.get(p.id);
+        if (!r || p.updated > r.updated) {
+          upserts.push({ user_id: user.id, id: p.id, data: p, updated: p.updated, deleted: false });
+        }
+      }
+      for (const [id, time] of Object.entries(S.tombstones)) {
+        const r = remote.get(id);
+        if (!r || time > r.updated) upserts.push({ user_id: user.id, id, data: {}, updated: time, deleted: true });
+        else delete S.tombstones[id];
+      }
+      if (upserts.length) {
+        const { error: upError } = await sb.from("projects").upsert(upserts, { onConflict: "user_id,id" });
+        if (upError) throw upError;
+        // Only clear flags for changes that weren't edited again meanwhile.
+        for (const u of upserts) {
+          if (u.deleted) {
+            if (S.tombstones[u.id] === u.updated) delete S.tombstones[u.id];
+          } else {
+            const p = state.projects.find(x => x.id === u.id);
+            if (p && p.updated === u.updated) delete S.dirty[u.id];
+          }
+        }
+      }
+      for (const p of state.projects) {
+        const r = remote.get(p.id);
+        if (r && r.updated === p.updated) delete S.dirty[p.id];
+      }
+
+      if (changed) {
+        if (!state.projects.some(p => p.id === state.currentId)) {
+          state.currentId = state.projects[0] ? state.projects[0].id : null;
+          currentChanged = true;
+        }
+        writeState();
+        if (currentChanged) shownProjectId = null;
+        render();
+      }
+    }
+
+    // Custom dropdown choices are only ever added, so merging is a simple union.
+    async function syncSettings() {
+      const S = state.sync;
+      const { data, error } = await sb.from("settings").select("custom").maybeSingle();
+      if (error) throw error;
+      const remoteCustom = (data && data.custom) || {};
+      let pulled = false;
+      let push = !data || S.customDirty;
+      for (const k of Object.keys(DEFAULTS)) {
+        const r = remoteCustom[k] || [];
+        for (const v of r) if (!state.custom[k].includes(v)) { state.custom[k].push(v); pulled = true; }
+        for (const v of state.custom[k]) if (!r.includes(v)) push = true;
+      }
+      if (pulled) { customSnapshot = JSON.stringify(state.custom); writeState(); }
+      if (push) {
+        const { error: upError } = await sb.from("settings").upsert({ user_id: user.id, custom: state.custom });
+        if (upError) throw upError;
+        S.customDirty = false;
+      }
+    }
+
+    function photoPath(id) { return `${user.id}/${id}.jpg`; }
+
+    async function syncPhotos() {
+      const S = state.sync;
+      const bucket = sb.storage.from("photos");
+      if (S.photoDeletes.length) {
+        const ids = [...S.photoDeletes];
+        const { error } = await bucket.remove(ids.map(photoPath));
+        if (error) throw error;
+        S.photoDeletes = S.photoDeletes.filter(id => !ids.includes(id));
+        for (const id of ids) delete S.uploaded[id];
+        writeState();
+      }
+      for (const p of state.projects) {
+        for (const ph of p.photos) {
+          if (S.uploaded[ph.id]) continue;
+          const blob = await getPhoto(ph.id);
+          if (!blob) continue; // added on another device, which uploads it
+          const { error } = await bucket.upload(photoPath(ph.id), blob, { upsert: true, contentType: "image/jpeg" });
+          if (error) throw error;
+          S.uploaded[ph.id] = true;
+          writeState();
+        }
+      }
+    }
+
+    async function downloadPhoto(id) {
+      if (!sb || !user) return null;
+      try {
+        const { data, error } = await sb.storage.from("photos").download(photoPath(id));
+        if (error || !data) return null;
+        await putPhoto(id, data);
+        state.sync.uploaded[id] = true;
+        writeState();
+        return data;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function hasPendingChanges() {
+      const S = state.sync;
+      return Object.keys(S.dirty).length > 0 || Object.keys(S.tombstones).length > 0 ||
+        S.photoDeletes.length > 0 || S.customDirty;
+    }
+
+    function setStatus(s) {
+      syncStatus = s;
+      updateAccountUI();
+    }
+
+    function updateAccountUI() {
+      const btn = document.getElementById("account-btn");
+      btn.classList.toggle("warn", !!user && syncStatus === "error");
+      if (!user) btn.textContent = "Sign in";
+      else btn.textContent = { syncing: "Syncing…", offline: "Offline", error: "⚠ Not synced" }[syncStatus] || "✓ Backed up";
+      document.getElementById("signed-out").classList.toggle("hidden", !!user);
+      document.getElementById("signed-in").classList.toggle("hidden", !user);
+      if (!user) return;
+      document.getElementById("account-email").textContent = `Signed in as ${user.email}`;
+      let detail = "";
+      if (syncStatus === "offline") detail = "You're offline. Changes are saved on this device and will sync when you're back online.";
+      else if (syncStatus === "error") detail = `Couldn't sync: ${syncError}. Changes are still saved on this device.`;
+      else if (state.sync.last) detail = `Last synced ${new Date(state.sync.last).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`;
+      document.getElementById("sync-detail").textContent = detail;
+    }
+
+    function setAuthMessage(text) {
+      document.getElementById("auth-msg").textContent = text;
+    }
+
+    document.getElementById("account-btn").addEventListener("click", e => {
+      const panel = document.getElementById("account-panel");
+      const open = panel.classList.toggle("hidden") === false;
+      e.currentTarget.setAttribute("aria-expanded", open);
+    });
+
+    async function authenticate(createAccount) {
+      const form = document.getElementById("auth-form");
+      if (!form.reportValidity()) return;
+      if (!sb) { setAuthMessage("Still connecting. Try again in a moment."); return; }
+      const email = document.getElementById("email-input").value.trim();
+      const password = document.getElementById("password-input").value;
+      const buttons = form.querySelectorAll("button");
+      buttons.forEach(b => b.disabled = true);
+      setAuthMessage(createAccount ? "Creating your account…" : "Signing in…");
+      const { data, error } = createAccount
+        ? await sb.auth.signUp({ email, password })
+        : await sb.auth.signInWithPassword({ email, password });
+      buttons.forEach(b => b.disabled = false);
+      if (error) {
+        const msg = /invalid login/i.test(error.message)
+          ? "That email and password don't match. New here? Tap Create account."
+          : error.message;
+        setAuthMessage(msg);
+        return;
+      }
+      if (createAccount && !data.session) {
+        // Happens if "Confirm email" is still on in Supabase.
+        setAuthMessage("Account created, but it needs email confirmation first. Check your inbox.");
+        return;
+      }
+      document.getElementById("password-input").value = "";
+      setAuthMessage("");
+    }
+
+    document.getElementById("auth-form").addEventListener("submit", e => {
+      e.preventDefault();
+      authenticate(false);
+    });
+    document.getElementById("create-account").addEventListener("click", () => authenticate(true));
+
+    document.getElementById("sync-now").addEventListener("click", () => sync());
+
+    document.getElementById("sign-out").addEventListener("click", async () => {
+      await sync();
+      const message = hasPendingChanges()
+        ? "Some changes haven't been backed up yet (you may be offline). Sign out anyway and lose them?"
+        : "Sign out? Your projects stay in your account and come back when you sign in again. They'll be removed from this device.";
+      if (!confirm(message)) return;
+      await sb.auth.signOut();
+      // Clear this device so a different account can't end up with these projects.
+      try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+      try { await photoStore("readwrite", s => s.clear()); } catch (e) {}
+      location.reload();
+    });
+
+    window.addEventListener("online", () => sync());
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") sync();
+    });
 
     function el(tag, props, children) {
       const node = Object.assign(document.createElement(tag), props || {});
@@ -913,8 +1340,11 @@
     document.getElementById("delete-project").addEventListener("click", () => {
       const p = current();
       if (!confirm(`Delete "${p.name}"? This can't be undone.`)) return;
-      for (const photo of p.photos) removePhotoData(photo.id);
+      for (const photo of p.photos) removePhotoData(photo.id, true);
       state.projects = state.projects.filter(x => x.id !== p.id);
+      state.sync.tombstones[p.id] = Date.now();
+      delete state.sync.dirty[p.id];
+      snapshots.delete(p.id);
       state.currentId = state.projects[0] ? state.projects[0].id : null;
       save();
       render();
@@ -938,6 +1368,7 @@
     });
 
     render();
+    initSync();
   </script>
 </body>
 </html>
