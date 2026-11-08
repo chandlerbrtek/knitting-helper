@@ -8,25 +8,35 @@
   <title>Knitting Helper</title>
   <style>
     :root {
-      --bg: #faf7f5;
+      /* --accent-l / --accent-d are set from JS to the project's color. */
+      --accent: var(--accent-l, #7a4e8c);
+      --base-bg: #faf7f5;
       --card: #ffffff;
       --text: #2d2430;
       --muted: #7b7080;
-      --accent: #7a4e8c;
-      --accent-soft: #efe6f3;
+      --accent-soft: color-mix(in srgb, var(--accent) 14%, var(--card));
+      --bg: color-mix(in srgb, var(--accent) 5%, var(--base-bg));
       --border: #e6dfe8;
       --danger: #b3394a;
     }
     @media (prefers-color-scheme: dark) {
       :root {
-        --bg: #1b171d;
+        --accent: var(--accent-d, #c79be0);
+        --base-bg: #1b171d;
         --card: #262029;
         --text: #f1ecf3;
         --muted: #a99fae;
-        --accent: #c79be0;
-        --accent-soft: #3a2f40;
+        --accent-soft: color-mix(in srgb, var(--accent) 20%, var(--card));
+        --bg: color-mix(in srgb, var(--accent) 6%, var(--base-bg));
         --border: #3a323e;
         --danger: #f08a98;
+      }
+    }
+    /* Older browsers without color-mix: plain neutral tints. */
+    @supports not (color: color-mix(in srgb, red 50%, blue)) {
+      :root { --accent-soft: #efe6f3; --bg: var(--base-bg); }
+      @media (prefers-color-scheme: dark) {
+        :root { --accent-soft: #3a2f40; }
       }
     }
     * { box-sizing: border-box; }
@@ -69,6 +79,33 @@
     .text-btn.danger { color: var(--danger); }
     .project-actions { display: flex; gap: 8px; margin-top: 8px; }
     .project-actions .text-btn { flex: 1; }
+
+    .color-panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px;
+      margin-top: 8px;
+    }
+    .color-panel p { margin: 0 0 10px; font-size: 0.85rem; color: var(--muted); }
+    .swatches { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+    .swatch {
+      aspect-ratio: 1;
+      width: 100%;
+      max-width: 48px;
+      justify-self: center;
+      border-radius: 50%;
+      border: none;
+      background: var(--sw-l);
+      color: #fff;
+      font-size: 1.1rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .swatch[aria-pressed="true"] { box-shadow: 0 0 0 3px var(--card), 0 0 0 5px var(--text); }
+    @media (prefers-color-scheme: dark) {
+      .swatch { background: var(--sw-d); color: #1b171d; }
+    }
 
     .counter {
       background: var(--card);
@@ -261,7 +298,12 @@
       </div>
       <div class="project-actions" id="project-actions">
         <button class="text-btn" id="rename-project">Rename</button>
+        <button class="text-btn" id="color-project" aria-expanded="false">Color</button>
         <button class="text-btn danger" id="delete-project">Delete</button>
+      </div>
+      <div class="color-panel hidden" id="color-panel">
+        <p id="color-name"></p>
+        <div class="swatches" id="swatches"></div>
       </div>
     </header>
 
@@ -377,6 +419,23 @@
       ]
     };
 
+    // Each color has a darker shade for light mode (white text on it stays
+    // readable) and a lighter shade for dark mode.
+    const COLORS = [
+      { key: "purple", name: "Purple", light: "#7a4e8c", dark: "#c79be0" },
+      { key: "pink",   name: "Pink",   light: "#c2185b", dark: "#f48fb1" },
+      { key: "berry",  name: "Berry",  light: "#b3263a", dark: "#f28b96" },
+      { key: "coral",  name: "Coral",  light: "#bf4a22", dark: "#f4a07a" },
+      { key: "gold",   name: "Mustard", light: "#946600", dark: "#e8c060" },
+      { key: "olive",  name: "Olive",  light: "#5f6e1f", dark: "#c2d37a" },
+      { key: "green",  name: "Forest", light: "#2e7d4f", dark: "#86d4a4" },
+      { key: "teal",   name: "Teal",   light: "#00756a", dark: "#7fd6c9" },
+      { key: "blue",   name: "Blue",   light: "#2a64b5", dark: "#8fb8f0" },
+      { key: "indigo", name: "Indigo", light: "#3f4fa8", dark: "#a3adf0" },
+      { key: "brown",  name: "Walnut", light: "#7a5236", dark: "#d4a888" },
+      { key: "slate",  name: "Slate",  light: "#56606e", dark: "#b4bdc9" }
+    ];
+
     const LISTS = {
       needles: {
         fields: [
@@ -441,6 +500,7 @@
       document.getElementById("counters").classList.toggle("hidden", !has);
       document.getElementById("lists").classList.toggle("hidden", !has);
       document.getElementById("extras").classList.toggle("hidden", !has);
+      if (!has) document.getElementById("color-panel").classList.add("hidden");
       document.getElementById("project-actions").classList.toggle("hidden", !has);
       select.classList.toggle("hidden", !has);
       document.getElementById("empty").classList.toggle("hidden", has);
@@ -460,6 +520,7 @@
         section.querySelector(".value").textContent = p[section.dataset.key];
       }
       for (const key of Object.keys(LISTS)) renderList(key);
+      applyColor();
       // The pattern and photos only need redrawing when the project changes,
       // not on every counter tap.
       if (p.id !== shownProjectId) {
@@ -469,6 +530,51 @@
       }
     }
     let shownProjectId = null;
+
+    // ----- Project color -----
+
+    const darkQuery = matchMedia("(prefers-color-scheme: dark)");
+
+    function applyColor() {
+      const p = state.projects.length ? current() : null;
+      const color = COLORS.find(c => c.key === (p && p.color)) || COLORS[0];
+      const root = document.documentElement.style;
+      root.setProperty("--accent-l", color.light);
+      root.setProperty("--accent-d", color.dark);
+      document.querySelector('meta[name="theme-color"]')
+        .setAttribute("content", darkQuery.matches ? "#1b171d" : color.light);
+      document.getElementById("color-name").textContent = `Project color: ${color.name}`;
+      for (const sw of document.querySelectorAll(".swatch")) {
+        const on = sw.dataset.key === color.key;
+        sw.setAttribute("aria-pressed", on);
+        sw.textContent = on ? "✓" : "";
+      }
+    }
+    darkQuery.addEventListener("change", applyColor);
+
+    const swatches = document.getElementById("swatches");
+    for (const c of COLORS) {
+      const sw = el("button", { type: "button", className: "swatch" });
+      sw.dataset.key = c.key;
+      sw.style.setProperty("--sw-l", c.light);
+      sw.style.setProperty("--sw-d", c.dark);
+      sw.setAttribute("aria-label", c.name);
+      sw.title = c.name;
+      swatches.append(sw);
+    }
+    swatches.addEventListener("click", e => {
+      const sw = e.target.closest(".swatch");
+      if (!sw) return;
+      current().color = sw.dataset.key;
+      save();
+      applyColor();
+    });
+
+    document.getElementById("color-project").addEventListener("click", e => {
+      const panel = document.getElementById("color-panel");
+      const open = panel.classList.toggle("hidden") === false;
+      e.currentTarget.setAttribute("aria-expanded", open);
+    });
 
     // ----- Pattern link -----
 
