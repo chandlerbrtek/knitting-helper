@@ -8,6 +8,7 @@ A helper for knitters — tools to make planning and working through knitting pr
 
 - Row and stitch counters with big, thumb-friendly + / − buttons
 - Multiple projects, each with its own saved counts
+- Needles and yarn lists per project, with common sizes, weights and fibers to pick from, plus your own (remembered for next time)
 - Rename, delete, and reset
 - Works on phones; counts are saved in your browser (no account needed)
 

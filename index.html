@@ -122,6 +122,69 @@
     .plus { background: var(--accent); color: var(--card); }
     .controls button:active { transform: scale(0.97); }
 
+    .list-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 16px;
+      margin-top: 16px;
+    }
+    .list-card .counter-head { margin-bottom: 4px; }
+    .list-card h2 {
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin: 0;
+    }
+    .add-btn {
+      font: inherit;
+      font-size: 0.9rem;
+      font-weight: 600;
+      background: var(--accent-soft);
+      color: var(--accent);
+      border: none;
+      border-radius: 10px;
+      padding: 10px 14px;
+      cursor: pointer;
+    }
+    .items { list-style: none; margin: 0; padding: 0; }
+    .items li {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 0;
+      border-top: 1px solid var(--border);
+    }
+    .items li:first-child { border-top: none; }
+    .item-text { flex: 1; min-width: 0; }
+    .item-title { font-weight: 600; overflow-wrap: anywhere; }
+    .item-detail { color: var(--muted); font-size: 0.9rem; margin-top: 2px; overflow-wrap: anywhere; }
+    .remove {
+      font: inherit;
+      font-size: 1.25rem;
+      background: none;
+      border: none;
+      color: var(--muted);
+      min-width: 44px;
+      min-height: 44px;
+      cursor: pointer;
+    }
+    .none { color: var(--muted); font-size: 0.95rem; margin: 8px 0 0; }
+    .add-form {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+    .add-form label { display: grid; gap: 4px; font-size: 0.85rem; color: var(--muted); }
+    .add-form select, .add-form input { width: 100%; }
+    .form-buttons { display: flex; gap: 8px; }
+    .form-buttons button { flex: 1; min-height: 48px; border-radius: 12px; font: inherit; font-weight: 600; cursor: pointer; }
+    .save { background: var(--accent); color: var(--card); border: none; }
+    .cancel { background: var(--card); color: var(--text); border: 1px solid var(--border); }
+
     .empty { text-align: center; color: var(--muted); padding: 48px 0; }
     .hidden { display: none !important; }
   </style>
@@ -166,27 +229,104 @@
       </section>
     </div>
 
+    <div id="lists">
+      <section class="list-card" data-list="needles">
+        <div class="counter-head">
+          <h2>Needles</h2>
+          <button class="add-btn" data-action="open-form">＋ Add</button>
+        </div>
+        <ul class="items"></ul>
+        <p class="none">No needles added yet.</p>
+        <form class="add-form hidden"></form>
+      </section>
+
+      <section class="list-card" data-list="yarns">
+        <div class="counter-head">
+          <h2>Yarn</h2>
+          <button class="add-btn" data-action="open-form">＋ Add</button>
+        </div>
+        <ul class="items"></ul>
+        <p class="none">No yarn added yet.</p>
+        <form class="add-form hidden"></form>
+      </section>
+    </div>
+
     <p class="empty hidden" id="empty">No projects yet. Tap ＋ to start one.</p>
   </main>
 
   <script>
     const STORAGE_KEY = "knitting-helper:v1";
 
+    // Common choices shown in the dropdowns. Anything the user adds is
+    // remembered in state.custom and offered for every project.
+    const DEFAULTS = {
+      needleSizes: [
+        "US 0 (2.0 mm)", "US 1 (2.25 mm)", "US 1.5 (2.5 mm)", "US 2 (2.75 mm)",
+        "US 2.5 (3.0 mm)", "US 3 (3.25 mm)", "US 4 (3.5 mm)", "US 5 (3.75 mm)",
+        "US 6 (4.0 mm)", "US 7 (4.5 mm)", "US 8 (5.0 mm)", "US 9 (5.5 mm)",
+        "US 10 (6.0 mm)", "US 10.5 (6.5 mm)", "US 11 (8.0 mm)", "US 13 (9.0 mm)",
+        "US 15 (10.0 mm)", "US 17 (12.75 mm)", "US 19 (15.0 mm)", "US 35 (19.0 mm)",
+        "US 50 (25.0 mm)"
+      ],
+      needleTypes: ["Circular", "Straight", "Double-pointed (DPN)", "Interchangeable", "Cable needle"],
+      yarnWeights: [
+        "Lace (0)", "Fingering (1)", "Sport (2)", "DK (3)", "Worsted (4)",
+        "Aran (4)", "Bulky (5)", "Super Bulky (6)", "Jumbo (7)"
+      ],
+      fibers: [
+        "Wool", "Merino", "Superwash wool", "Alpaca", "Mohair", "Cashmere",
+        "Cotton", "Linen", "Silk", "Bamboo", "Acrylic", "Wool/nylon blend", "Wool blend"
+      ]
+    };
+
+    const LISTS = {
+      needles: {
+        fields: [
+          { key: "size", label: "Size", choices: "needleSizes", required: true },
+          { key: "type", label: "Type (optional)", choices: "needleTypes" },
+          { key: "note", label: "Note (optional)", placeholder: "e.g. for the ribbing" }
+        ],
+        title: n => [n.size, n.type].filter(Boolean).join(" · "),
+        detail: n => n.note
+      },
+      yarns: {
+        fields: [
+          { key: "weight", label: "Weight", choices: "yarnWeights", required: true },
+          { key: "fiber", label: "Fiber (optional)", choices: "fibers" },
+          { key: "name", label: "Brand / colour (optional)", placeholder: "e.g. Malabrigo Rios, Azul" }
+        ],
+        title: y => [y.weight, y.fiber].filter(Boolean).join(" · "),
+        detail: y => y.name
+      }
+    };
+
     function load() {
-      try {
-        const data = JSON.parse(localStorage.getItem(STORAGE_KEY));
-        if (data && Array.isArray(data.projects)) return data;
-      } catch (e) {}
-      const first = newProject("My first project");
-      return { projects: [first], currentId: first.id };
+      let data = null;
+      try { data = JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch (e) {}
+      if (!data || !Array.isArray(data.projects)) {
+        const first = newProject("My first project");
+        data = { projects: [first], currentId: first.id };
+      }
+      // Fill in fields added after the first version, so old saves keep working.
+      data.custom = data.custom || {};
+      for (const k of Object.keys(DEFAULTS)) data.custom[k] = data.custom[k] || [];
+      for (const p of data.projects) {
+        p.needles = p.needles || [];
+        p.yarns = p.yarns || [];
+      }
+      return data;
     }
 
     function save() {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
     }
 
+    function newId() {
+      return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    }
+
     function newProject(name) {
-      return { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, rows: 0, stitches: 0 };
+      return { id: newId(), name, rows: 0, stitches: 0, needles: [], yarns: [] };
     }
 
     const state = load();
@@ -199,6 +339,7 @@
     function render() {
       const has = state.projects.length > 0;
       document.getElementById("counters").classList.toggle("hidden", !has);
+      document.getElementById("lists").classList.toggle("hidden", !has);
       document.getElementById("project-actions").classList.toggle("hidden", !has);
       select.classList.toggle("hidden", !has);
       document.getElementById("empty").classList.toggle("hidden", has);
@@ -217,7 +358,138 @@
       for (const section of document.querySelectorAll(".counter")) {
         section.querySelector(".value").textContent = p[section.dataset.key];
       }
+      for (const key of Object.keys(LISTS)) renderList(key);
     }
+
+    function el(tag, props, children) {
+      const node = Object.assign(document.createElement(tag), props || {});
+      for (const c of children || []) node.append(c);
+      return node;
+    }
+
+    function listCard(key) {
+      return document.querySelector(`.list-card[data-list="${key}"]`);
+    }
+
+    function renderList(key) {
+      const card = listCard(key);
+      const cfg = LISTS[key];
+      const items = current()[key];
+      const ul = card.querySelector(".items");
+      ul.innerHTML = "";
+      for (const item of items) {
+        const text = el("div", { className: "item-text" }, [
+          el("div", { className: "item-title", textContent: cfg.title(item) })
+        ]);
+        const detail = cfg.detail(item);
+        if (detail) text.append(el("div", { className: "item-detail", textContent: detail }));
+        const remove = el("button", { className: "remove", textContent: "×", type: "button" });
+        remove.dataset.action = "remove";
+        remove.dataset.id = item.id;
+        remove.setAttribute("aria-label", `Remove ${cfg.title(item)}`);
+        ul.append(el("li", {}, [text, remove]));
+      }
+      card.querySelector(".none").classList.toggle("hidden", items.length > 0);
+    }
+
+    // Fill a dropdown with the common choices, the user's own choices,
+    // and an "Add your own…" option at the end.
+    function fillSelect(select, field, selected) {
+      select.innerHTML = "";
+      if (!field.required) select.append(el("option", { value: "", textContent: "—" }));
+      const groups = [["Common", DEFAULTS[field.choices]], ["Your own", state.custom[field.choices]]];
+      for (const [label, values] of groups) {
+        if (!values.length) continue;
+        const group = el("optgroup", { label });
+        for (const v of values) group.append(el("option", { value: v, textContent: v }));
+        select.append(group);
+      }
+      select.append(el("option", { value: "__custom", textContent: "＋ Add your own…" }));
+      select.value = selected || "";
+      if (select.selectedIndex < 0) select.selectedIndex = 0;
+      select.dataset.last = select.value;
+    }
+
+    function openForm(key) {
+      const card = listCard(key);
+      const form = card.querySelector(".add-form");
+      form.innerHTML = "";
+      for (const field of LISTS[key].fields) {
+        let input;
+        if (field.choices) {
+          input = el("select", { name: field.key });
+          fillSelect(input, field);
+          input.addEventListener("change", () => onSelectChange(input, field));
+        } else {
+          input = el("input", { type: "text", name: field.key, placeholder: field.placeholder || "" });
+        }
+        form.append(el("label", {}, [field.label, input]));
+      }
+      const cancel = el("button", { type: "button", className: "cancel", textContent: "Cancel" });
+      cancel.dataset.action = "close-form";
+      form.append(el("div", { className: "form-buttons" }, [
+        cancel,
+        el("button", { type: "submit", className: "save", textContent: "Save" })
+      ]));
+      form.classList.remove("hidden");
+      card.querySelector('[data-action="open-form"]').classList.add("hidden");
+    }
+
+    function closeForm(key) {
+      const card = listCard(key);
+      card.querySelector(".add-form").classList.add("hidden");
+      card.querySelector('[data-action="open-form"]').classList.remove("hidden");
+    }
+
+    function onSelectChange(select, field) {
+      if (select.value !== "__custom") {
+        select.dataset.last = select.value;
+        return;
+      }
+      const value = (prompt(`Add your own ${field.label.replace(/ \(optional\)/, "").toLowerCase()}`) || "").trim();
+      if (!value) {
+        select.value = select.dataset.last;
+        return;
+      }
+      const list = state.custom[field.choices];
+      if (!DEFAULTS[field.choices].includes(value) && !list.includes(value)) {
+        list.push(value);
+        save();
+      }
+      fillSelect(select, field, value);
+    }
+
+    document.getElementById("lists").addEventListener("click", e => {
+      const btn = e.target.closest("button[data-action]");
+      if (!btn) return;
+      const key = btn.closest(".list-card").dataset.list;
+      const action = btn.dataset.action;
+      if (action === "open-form") openForm(key);
+      else if (action === "close-form") closeForm(key);
+      else if (action === "remove") {
+        const p = current();
+        const item = p[key].find(x => x.id === btn.dataset.id);
+        if (!item || !confirm(`Remove ${LISTS[key].title(item)}?`)) return;
+        p[key] = p[key].filter(x => x !== item);
+        save();
+        renderList(key);
+      }
+    });
+
+    document.getElementById("lists").addEventListener("submit", e => {
+      e.preventDefault();
+      const form = e.target;
+      const key = form.closest(".list-card").dataset.list;
+      const item = { id: newId() };
+      for (const field of LISTS[key].fields) {
+        const v = form.elements[field.key].value.trim();
+        item[field.key] = v === "__custom" ? "" : v;
+      }
+      current()[key].push(item);
+      save();
+      closeForm(key);
+      renderList(key);
+    });
 
     select.addEventListener("change", () => {
       state.currentId = select.value;
