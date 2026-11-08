@@ -10,6 +10,7 @@ A helper for knitters — tools to make planning and working through knitting pr
 - Multiple projects, each with its own saved counts
 - Needles and yarn lists per project, with common sizes, weights and fibers to pick from, plus your own (remembered for next time)
 - A pattern link per project (opens in a new tab)
+- General notes per project
 - Progress photos per project: take or choose pictures, tap to view full-screen
 - A color per project, from 12 choices (pink included), in light and dark mode
 - Rename, delete, and reset
