@@ -1,0 +1,31 @@
+# Free Supabase projects pause after 7 days without requests. This job makes
+# a tiny database request twice a week so the project stays awake.
+# It fails (and GitHub emails you) if Supabase is down or paused.
+#
+# Note: GitHub turns off scheduled jobs in public repos after 60 days with no
+# commits. It emails a warning first; re-enable from the repo's Actions tab.
+name: Keep Supabase awake
+
+on:
+  schedule:
+    - cron: "0 12 * * 1,4" # Mondays and Thursdays, 12:00 UTC
+  workflow_dispatch: # adds a "Run workflow" button for manual runs
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Query the database
+        env:
+          # Same public values as index.html; signed-out requests see no data.
+          SUPABASE_URL: https://szspizesgugbtvriejfj.supabase.co
+          SUPABASE_KEY: sb_publishable_LXCn4vY-pJDmg7nBw5fhWg_UTUr0KAw
+        run: |
+          curl --fail --silent --show-error --retry 3 --retry-delay 10 \
+            "$SUPABASE_URL/rest/v1/projects?select=id&limit=1" \
+            -H "apikey: $SUPABASE_KEY"
+          echo
+          echo "Supabase is awake."
